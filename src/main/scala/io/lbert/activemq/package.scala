@@ -24,7 +24,7 @@ package object activemq {
 
     trait Service {
       def consumeTopic(topic: Topic): ZStream[Connection, Error, Message]
-      def produceTopic(message: String, topic: Topic): ZIO[Connection, Error, Unit]
+      def produceTopic(topic: Topic, message: String): ZIO[Connection, Error, Unit]
     }
 
     object Service {
@@ -45,7 +45,7 @@ package object activemq {
                }.ensuring(UIO(blocking.get.effectBlocking(cons.close())))
              } yield out
 
-           override def produceTopic(message: String, topic: Topic): ZIO[Connection, Error, Unit] =
+           override def produceTopic(topic: Topic, message: String): ZIO[Connection, Error, Unit] =
              ZIO.environment[Connection].flatMap { conn =>
                getSession(conn).use { sess =>
                  getProducer(sess, topic).use { prod =>
@@ -58,6 +58,14 @@ package object activemq {
          }
       }
     }
+
+    def consumeTopic(topic: Topic): ZStream[ActiveMQ with Connection, Error, Message] =
+      ZStream.accessStream(_.get.consumeTopic(topic))
+
+    def produceTopic(topic: Topic, message: String): ZIO[ActiveMQ with Connection, Error, Unit] =
+      ZIO.accessM(_.get.produceTopic(topic, message))
+
+    val live: ZLayer[Blocking, Nothing, ActiveMQ] = Service.live
 
     def getConnection(connection: AMQConnection): Managed[Error, Connection] =
       IO.effect {
