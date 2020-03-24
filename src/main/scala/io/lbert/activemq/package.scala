@@ -23,17 +23,17 @@ package object activemq {
     import Error._
 
     trait Service {
-      def consumeTopic(topic: Topic): ZStream[Connection, Error, Message]
-      def produceTopic(topic: Topic, message: String): ZIO[Connection, Error, Unit]
+      def consumeTopic(topic: Topic): ZStream[Has[Connection], Error, Message]
+      def produceTopic(topic: Topic, message: String): ZIO[Has[Connection], Error, Unit]
     }
 
     object Service {
       val live: ZLayer[Blocking, Nothing, ActiveMQ] = ZLayer.fromFunction { blocking =>
          new Service {
-           override def consumeTopic(topic: Topic): ZStream[Connection, Error, Message] =
+           override def consumeTopic(topic: Topic): ZStream[Has[Connection], Error, Message] =
              for {
-               conn <- ZStream.environment[Connection]
-               sess <- ZStream.managed(getSession(conn))
+               conn <- ZStream.environment[Has[Connection]]
+               sess <- ZStream.managed(getSession(conn.get))
                cons <- ZStream.managed(getConsumer(sess, topic))
                out  <- ZStream.effectAsyncM[Any, Error, Message] { offer =>
                  blocking.get.effectBlocking {
@@ -45,9 +45,9 @@ package object activemq {
                }.ensuring(UIO(blocking.get.effectBlocking(cons.close())))
              } yield out
 
-           override def produceTopic(topic: Topic, message: String): ZIO[Connection, Error, Unit] =
-             ZIO.environment[Connection].flatMap { conn =>
-               getSession(conn).use { sess =>
+           override def produceTopic(topic: Topic, message: String): ZIO[Has[Connection], Error, Unit] =
+             ZIO.environment[Has[Connection]].flatMap { conn =>
+               getSession(conn.get).use { sess =>
                  getProducer(sess, topic).use { prod =>
                    blocking.get.effectBlocking {
                      prod.send(sess.createTextMessage(message))
@@ -59,13 +59,17 @@ package object activemq {
       }
     }
 
-    def consumeTopic(topic: Topic): ZStream[ActiveMQ with Connection, Error, Message] =
+    def consumeTopic(topic: Topic): ZStream[ActiveMQ with Has[Connection], Error, Message] =
       ZStream.accessStream(_.get.consumeTopic(topic))
 
-    def produceTopic(topic: Topic, message: String): ZIO[ActiveMQ with Connection, Error, Unit] =
+    def produceTopic(topic: Topic, message: String): ZIO[ActiveMQ with Has[Connection], Error, Unit] =
       ZIO.accessM(_.get.produceTopic(topic, message))
 
-    val live: ZLayer[Blocking, Nothing, ActiveMQ] = Service.live
+    val any: ZLayer[ActiveMQ, Nothing, ActiveMQ] =
+      ZLayer.requires[ActiveMQ]
+
+    val live: ZLayer[Blocking, Nothing, ActiveMQ] =
+      Service.live
 
     def getConnection(connection: AMQConnection): Managed[Error, Connection] =
       IO.effect {
