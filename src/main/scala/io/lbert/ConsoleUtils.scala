@@ -1,14 +1,14 @@
 package io.lbert
 
-import java.util.concurrent.TimeUnit
 import io.lbert.activemq.AMQConnection.{AMQCredentials, AMQUrl, Password, Username}
 import io.lbert.activemq.ActiveMQ.Topic
 import io.lbert.activemq.{AMQConnection, ActiveMQ}
 import javax.jms.{Connection, TextMessage}
-import zio.{Has, Schedule, ZIO, ZLayer}
-import zio.console.{Console, putStrLn}
+import zio.console.putStrLn
+import zio.console.Console
 import zio.duration.Duration
 import zio.stream.ZStream
+import zio.{Has, Schedule, ZIO, ZLayer}
 
 object ConsoleUtils {
 
@@ -40,9 +40,8 @@ object ConsoleUtils {
     topic: Topic
   ): ZIO[Env, ActiveMQ.Error, Unit] =
     for {
-      amq <- ZIO.environment[ActiveMQ]
       _ <- putStrLn(s"Reading from topic [${topic.topicName}]")
-      _ <- amq.get.consumeTopic(topic).mapM {
+      _ <- ActiveMQ.consumeTopic(topic).mapM {
         case message: TextMessage => putStrLn(s"Got TextMessage [${message.getText}]")
         case message => putStrLn(s"Got ${message.getClass.getSimpleName} [$message]")
     }.runDrain
@@ -54,9 +53,8 @@ object ConsoleUtils {
     message: String
   ): ZIO[Env, ActiveMQ.Error, Unit] =
     for {
-      amq <- ZIO.environment[ActiveMQ]
       _   <- putStrLn(s"Writing to topic [${topic.topicName}]")
-      _   <- amq.get.produceTopic(topic, message)
+      _   <- ActiveMQ.produceTopic(topic, message)
       _   <- putStrLn(s"Done writing to topic [${topic.topicName}]")
     } yield ()
 
