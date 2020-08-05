@@ -11,7 +11,6 @@ lazy val root = (project in file(".")).
     libraryDependencies ++= Seq(
       zio,
       zioStreams,
-      zioLogging,
       activemq,
       scalaTest % Test
     ),

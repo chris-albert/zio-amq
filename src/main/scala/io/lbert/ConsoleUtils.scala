@@ -3,12 +3,13 @@ package io.lbert
 import io.lbert.activemq.AMQConnection.{AMQCredentials, AMQUrl, Password, Username}
 import io.lbert.activemq.ActiveMQ.Topic
 import io.lbert.activemq.{AMQConnection, ActiveMQ}
-import javax.jms.{Connection, TextMessage}
-import zio.console.putStrLn
+import javax.jms.TextMessage
+import zio.blocking.Blocking
+import zio.clock.Clock
 import zio.console.Console
 import zio.duration.Duration
 import zio.stream.ZStream
-import zio.{Has, Schedule, ZIO, ZLayer}
+import zio.{IO, Schedule}
 
 object ConsoleUtils {
 
@@ -20,42 +21,53 @@ object ConsoleUtils {
     ))
   )
 
-  val amqConnectionLayer: ZLayer[Any, ActiveMQ.Error, Has[Connection]] =
-    ZLayer.fromManaged(ActiveMQ.getConnection(amqConnection))
-
-  val withConn: ZLayer[zio.ZEnv, ActiveMQ.Error, Env] =
-    (zio.ZEnv.any >>> ActiveMQ.live) ++
-      zio.ZEnv.any ++
-      amqConnectionLayer
-
-  def stream(topic: Topic, f: Int => String, duration: Duration) = ZStream
-    .fromSchedule(Schedule.spaced(duration))
-    .flatMap(i =>
-      ZStream.fromEffect(ConsoleUtils.writeToTopic(topic, f(i)))
-    )
-
-  type Env = zio.ZEnv with ActiveMQ with Has[Connection]
+  def stream(
+    topic: Topic,
+    f: Int => String, duration: Duration
+  )(
+    blocking: Blocking.Service,
+    console : Console.Service
+  ) =
+    ZStream
+      .fromSchedule(Schedule.spaced(duration))
+      .flatMap(i =>
+        ZStream.fromEffect(writeToTopic(topic, f(i))(blocking, console))
+      )
 
   def readFromTopic(
-    topic: Topic
-  ): ZIO[Env, ActiveMQ.Error, Unit] =
-    for {
-      _ <- putStrLn(s"Reading from topic [${topic.topicName}]")
-      _ <- ActiveMQ.consumeTopic(topic).mapM {
-        case message: TextMessage => putStrLn(s"Got TextMessage [${message.getText}]")
-        case message => putStrLn(s"Got ${message.getClass.getSimpleName} [$message]")
-    }.runDrain
-      _   <- putStrLn(s"Done consuming topic [${topic.topicName}]")
-    } yield ()
+    topic  : Topic
+  )(
+    blocking: Blocking.Service,
+    console : Console.Service
+  ): IO[ActiveMQ.Error, Unit] =
+    ActiveMQ.getConnection(amqConnection).use(conn =>
+      ActiveMQ.forConnection(blocking, conn).use(amq =>
+        for {
+          _    <- console.putStrLn(s"Reading from topic [${topic.topicName}]")
+          _ <- amq.consumeTopic(topic).mapM {
+            case message: TextMessage => console.putStrLn(s"Got TextMessage [${message.getText}]")
+            case message => console.putStrLn(s"Got ${message.getClass.getSimpleName} [$message]")
+          }.runDrain
+          _   <- console.putStrLn(s"Done consuming topic [${topic.topicName}]")
+        } yield ()
+      )
+    )
 
   def writeToTopic(
     topic: Topic,
     message: String
-  ): ZIO[Env, ActiveMQ.Error, Unit] =
-    for {
-      _   <- putStrLn(s"Writing to topic [${topic.topicName}]")
-      _   <- ActiveMQ.produceTopic(topic, message)
-      _   <- putStrLn(s"Done writing to topic [${topic.topicName}]")
-    } yield ()
+  )(
+    blocking: Blocking.Service,
+    console : Console.Service
+  ): IO[ActiveMQ.Error, Unit] =
+    ActiveMQ.getConnection(amqConnection).use(conn =>
+      ActiveMQ.forConnection(blocking, conn).use(amq =>
+        for {
+          _   <- console.putStrLn(s"Writing to topic [${topic.topicName}]")
+          _   <- amq.produceTopic(topic, message)
+          _   <- console.putStrLn(s"Done writing to topic [${topic.topicName}]")
+        } yield ()
+      )
+    )
 
 }

@@ -1,28 +1,30 @@
 package io.lbert
 
 import java.util.concurrent.TimeUnit
+import io.lbert.activemq.ActiveMQ
 import io.lbert.activemq.ActiveMQ.Topic
 import zio.clock._
-import zio.console._
+import zio.console.Console
+import zio.blocking.Blocking
 import zio.duration.Duration
-import zio.{App, IO, ZEnv, ZIO}
+import zio.{App, ExitCode, ZEnv, ZIO}
 
 object Main extends App {
 
-  def run(args: List[String]): ZIO[ZEnv, Nothing, Int] = {
-    val topic = Topic("test.topic")
-    val prog = (for {
-      _ <- ConsoleUtils.readFromTopic(topic).fork
-      _ <- sleep(Duration(1, TimeUnit.SECONDS))
-      _ <- ConsoleUtils.stream(topic, i => s"Heyo there... [$i]", Duration(1, TimeUnit.SECONDS))
-        .take(5)
-        .runDrain
-    } yield ())
-      .provideLayer(ConsoleUtils.withConn)
+  val topic = Topic("test.topic")
 
-    prog.foldM(
-      err => putStrLn(s"Execution failed with error [$err]") *> IO.succeed(1),
-      _   => IO.succeed(0)
-    )
-  }
+  def program: ZIO[zio.ZEnv, ActiveMQ.Error, Unit] =
+    for {
+      blocking <- ZIO.environment[Blocking].map(_.get)
+      console  <- ZIO.environment[Console].map(_.get)
+      clock    <- ZIO.environment[Clock].map(_.get)
+      _        <- ConsoleUtils.readFromTopic(topic)(blocking, console).fork
+      _        <- clock.sleep(Duration(1, TimeUnit.SECONDS))
+      _        <- ConsoleUtils.stream(topic, i => s"Heyo there... [$i]", Duration(1, TimeUnit.SECONDS))(blocking, console)
+                    .take(5)
+                    .runDrain
+    } yield ()
+
+  def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
+    program.exitCode
 }
